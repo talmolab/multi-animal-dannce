@@ -6,19 +6,20 @@ from typing import Text
 import torch
 import torch.nn.functional as F
 
+
 class Camera:
     def __init__(self, R, t, K, tdist, rdist, name=""):
-        self.R = torch.tensor(R).float() # rotation matrix
+        self.R = torch.tensor(R).float()  # rotation matrix
         assert self.R.shape == (3, 3)
 
-        self.t = torch.tensor(t).float() # translation vector
+        self.t = torch.tensor(t).float()  # translation vector
         assert self.t.shape == (1, 3)
 
-        self.K = torch.tensor(K).float() # intrinsic matrix
+        self.K = torch.tensor(K).float()  # intrinsic matrix
         assert self.K.shape == (3, 3)
 
-        self.extrinsics = torch.cat((self.R, self.t), dim=0) # extrinsics
-        self.M = self.extrinsics @ self.K # camera matrix
+        self.extrinsics = torch.cat((self.R, self.t), dim=0)  # extrinsics
+        self.M = self.extrinsics @ self.K  # camera matrix
 
         # distortion
         self.tdist = torch.tensor(tdist).squeeze().float()
@@ -47,13 +48,19 @@ class Camera:
         new_cx = cx * (new_width / width)
         new_cy = cy * (new_height / height)
 
-        self.K[0, 0], self.K[1, 1], self.K[2, 0], self.K[2, 1] = new_fx, new_fy, new_cx, new_cy
-    
+        self.K[0, 0], self.K[1, 1], self.K[2, 0], self.K[2, 1] = (
+            new_fx,
+            new_fy,
+            new_cx,
+            new_cy,
+        )
+
     def camera_matrix(self):
         return self.M
 
     def extrinsics(self):
         return self.extrinsics
+
 
 def camera_matrix(K: np.ndarray, R: np.ndarray, t: np.ndarray) -> np.ndarray:
     """Derive the camera matrix.
@@ -67,6 +74,7 @@ def camera_matrix(K: np.ndarray, R: np.ndarray, t: np.ndarray) -> np.ndarray:
     """
     return np.concatenate((R, t), axis=0) @ K
 
+
 def world_to_cam(pts, M, device):
     M = M.to(device=device)
     pts1 = torch.ones(pts.shape[0], 1, dtype=torch.float32, device=device)
@@ -74,24 +82,37 @@ def world_to_cam(pts, M, device):
     projPts = torch.matmul(torch.cat((pts, pts1), 1), M)
     return projPts
 
-def project_to2d(pts, M: np.ndarray, device: Text) -> torch.Tensor:
-    """Project 3d points to 2d.
 
-    Projects a set of 3-D points, pts, into 2-D using the camera intrinsic
-    matrix (K), and the extrinsic rotation matric (R), and extrinsic
-    translation vector (t). Note that this uses the matlab
-    convention, such that
-    M = [R;t] * K, and pts2d = pts3d * M
-    """
+def project_to2d(pts, rvec, tvec, K, distortion_vec):
+    # prevent inplace operation, make a copy
+    pts_np = pts.detach().cpu().numpy()
 
-    # pts = torch.Tensor(pts.copy()).to(device)
-    M = M.to(device=device)
-    pts1 = torch.ones(pts.shape[0], 1, dtype=torch.float32, device=device)
+    out, _ = cv2.projectPoints(pts_np, rvec, tvec, K, distortion_vec)
 
-    projPts = torch.matmul(torch.cat((pts, pts1), 1), M)
-    projPts[:, :2] = projPts[:, :2] / projPts[:, 2:]
+    return torch.from_numpy(out)
 
-    return projPts
+
+# def project_to2d(pts, M: np.ndarray, device: Text) -> torch.Tensor:
+#    """Project 3d points to 2d.
+#
+#    Projects a set of 3-D points, pts, into 2-D using the camera intrinsic
+#    matrix (K), and the extrinsic rotation matric (R), and extrinsic
+#    translation vector (t). Note that this uses the matlab
+#    convention, such that
+#    M = [R;t] * K, and pts2d = pts3d * M
+#    """
+#
+#    # pts = torch.Tensor(pts.copy()).to(device)
+#    M = M.to(device=device)
+#    pts1 = torch.ones(pts.shape[0], 1, dtype=torch.float32, device=device)
+#
+#    projPts = torch.matmul(torch.cat((pts, pts1), 1), M)
+#    projPts[:, :2] = projPts[:, :2] / projPts[:, 2:]
+#    print(f'---------------------------')
+#    print(f'projected points shape: {projPts.shape}')
+#    print(f'projected points: {projPts}')
+#
+#    return projPts
 
 
 def sample_grid_nearest(
@@ -192,7 +213,9 @@ def sample_grid_linear(
     return Ibilin.reshape((c, c, c, -1)).permute(3, 0, 1, 2).unsqueeze(0)
 
 
-def sample_grid(im: np.ndarray, projPts: np.ndarray, device: Text, method: Text = "linear"):
+def sample_grid(
+    im: np.ndarray, projPts: np.ndarray, device: Text, method: Text = "linear"
+):
     """Transfer 3d features to 2d by projecting down to 2d grid, using torch.
 
     Use 2d interpolation to transfer features to 3d points that have
@@ -208,6 +231,7 @@ def sample_grid(im: np.ndarray, projPts: np.ndarray, device: Text, method: Text 
         raise Exception("{} not a valid interpolation method".format(method))
 
     return proj_rgb
+
 
 def unDistortPoints(
     pts,
@@ -347,7 +371,7 @@ def distortPoints(
     xNorm = (centeredPoints[:, 0] - skew * yNorm) / fx
 
     # compute radial distortion
-    r2 = xNorm ** 2 + yNorm ** 2
+    r2 = xNorm**2 + yNorm**2
     r4 = r2 * r2
     r6 = r2 * r4
 
@@ -362,8 +386,8 @@ def distortPoints(
     # compute tangential distortion
     p = tangentialDistortion
     xyProduct = xNorm * yNorm
-    dxTangential = 2 * p[0] * xyProduct + p[1] * (r2 + 2 * xNorm ** 2)
-    dyTangential = p[0] * (r2 + 2 * yNorm ** 2) + 2 * p[1] * xyProduct
+    dxTangential = 2 * p[0] * xyProduct + p[1] * (r2 + 2 * xNorm**2)
+    dyTangential = p[0] * (r2 + 2 * yNorm**2) + 2 * p[1] * xyProduct
 
     # apply the distortion to the points
     normalizedPoints = torch.transpose(torch.stack((xNorm, yNorm)), 0, 1)
@@ -386,15 +410,17 @@ def distortPoints(
 
     return distortedPoints
 
+
 def expected_value_3d(prob_map, grid_centers):
     bs, channels, h, w, d = prob_map.shape
 
     prob_map = prob_map.permute(0, 2, 3, 4, 1).reshape(-1, channels)
     grid_centers = grid_centers.reshape(-1, 3)
     weighted_centers = prob_map.unsqueeze(1) * grid_centers.unsqueeze(-1)
-    weighted_centers = weighted_centers.reshape(-1, h*w*d, 3, channels).sum(1)
+    weighted_centers = weighted_centers.reshape(-1, h * w * d, 3, channels).sum(1)
 
-    return weighted_centers # [bs, 3, channels]
+    return weighted_centers  # [bs, 3, channels]
+
 
 def max_coord_3d(heatmaps):
     heatmaps = spatial_softmax(heatmaps)
@@ -424,20 +450,23 @@ def max_coord_3d(heatmaps):
 
     return preds
 
+
 def expected_value_2d(prob_map, grid):
     bs, channels, h, w = prob_map.shape
 
-    prob_map = prob_map.permute(0, 2, 3, 1).reshape(bs, -1, channels).unsqueeze(2) #[bs, h*w, 1, channels]
-    weighted_centers = prob_map * grid #[bs, h*w, 2, channels]
+    prob_map = (
+        prob_map.permute(0, 2, 3, 1).reshape(bs, -1, channels).unsqueeze(2)
+    )  # [bs, h*w, 1, channels]
+    weighted_centers = prob_map * grid  # [bs, h*w, 2, channels]
 
-    return weighted_centers.sum(1) #[bs, 2, channels]
+    return weighted_centers.sum(1)  # [bs, 2, channels]
 
 
 def spatial_softmax(feats):
     """
     can work with 2D or 3D
     """
-    bs, channels= feats.shape[:2]
+    bs, channels = feats.shape[:2]
     feat_shape = feats.shape[2:]
     feats = feats.reshape(bs, channels, -1)
     feats = F.softmax(feats, dim=-1)
@@ -459,6 +488,6 @@ def var_3d(prob_map, grid_centers, markerlocs):
     grid_dist = grid_dist.reshape(-1, channels)
 
     weighted_var = prob_map * grid_dist
-    weighted_var = weighted_var.reshape(-1, h*w*d, channels)
+    weighted_var = weighted_var.reshape(-1, h * w * d, channels)
     weighted_var = weighted_var.sum(1)
     return torch.mean(weighted_var, dim=-1, keepdim=True)

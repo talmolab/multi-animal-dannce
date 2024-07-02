@@ -211,8 +211,10 @@ class LoadVideoFrame:
 
         thisvid_name = self.vidreaders[camname][keyname]
         abname = thisvid_name.split("/")[-1]
+
         if abname == self.currvideo_name[camname]:
             vid = self.currvideo[camname]
+
         else:
             # use imageio for prediction, because linear seeking
             # is faster with imageio than opencv
@@ -232,21 +234,27 @@ class LoadVideoFrame:
             print("Loading new video: {} for {}".format(abname, camname))
             self.currvideo_name[camname] = abname
             # close current vid
+            # print(f'curr video name: {self.currvideo_name}')
             # Without a sleep here, ffmpeg can hang on video close
             time.sleep(0.25)
 
             # Close previously opened and unneeded videos by their camera name
-            # Assumes the camera names do not contain underscores other than the expid. 
+            # Assumes the camera names do not contain underscores other than the expid.
             # previous_camera_name = "_".join(camname.split("_")[1:])
             previous_camera_name = camname.split("_")[-1]
             for key, value in self.currvideo.items():
                 if previous_camera_name in key:
+
                     if value is not None:
-                        self.currvideo[
-                            key
-                        ].close() if self.predict_flag else self.currvideo[
-                            key
-                        ]._reader_.release()
+                        try:
+                            self.currvideo[
+                                key
+                            ].close() if self.predict_flag else self.currvideo[
+                                key
+                            ]._reader_.release()
+                        except:
+                            pass
+
             self.currvideo[camname] = vid
         im = self._load_frame_multiple_attempts(frame_num, vid)
         return im

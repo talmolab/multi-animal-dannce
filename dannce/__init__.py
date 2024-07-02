@@ -5,7 +5,7 @@ _param_defaults_shared = {
     "random_seed": None,
     "immode": "vid",
     "verbose": 1,
-    "gpu_id": "0",
+    "gpu_id": "1",
     "loss": "mask_nan_keep_loss",
     "start_batch": 0,
     "exp": None,
@@ -46,13 +46,13 @@ _param_defaults_shared = {
     "use_npy": False,
     "data_split_seed": None,
     "valid_exp": None,
-    "norm_method":"layer",
+    "norm_method": "layer",
     "slurm_config": None,
     "save_period": 100,
     "predict_labeled_only": False,
     "training_fraction": None,
     "custom_model": None,
-    "label3d_index": 0
+    "label3d_index": 0,
 }
 _param_defaults_dannce = {
     "dataset": "label3d",
@@ -68,7 +68,7 @@ _param_defaults_dannce = {
     "com_method": "median",
     "channel_combo": None,
     "new_last_kernel_size": [3, 3, 3],
-    "n_channels_out": 20,
+    "n_channels_out": 15,
     "cthresh": None,
     "medfilt_window": None,
     "com_fromlabels": False,
@@ -119,7 +119,7 @@ _param_defaults_dannce = {
     "inference_ttt": None,
     ## augmentation
     "form_batch": False,
-    "form_bs": None
+    "form_bs": None,
 }
 _param_defaults_com = {
     "dsmode": "nn",
@@ -133,7 +133,8 @@ _param_defaults_com = {
     "com_predict_dir": None,
     "com_finetune_weights": None,
     "com_predict_weights": None,
-    "com_debug": None,
+    # "com_debug": None,
+    "com_debug": True,
     "com_exp": None,
     "n_channels_out": 1,
     "augment_rotation": False,

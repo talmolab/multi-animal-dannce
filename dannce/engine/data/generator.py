@@ -28,19 +28,20 @@ MISSING_KEYPOINTS_MSG = (
 )
 
 """
-Notes: 
+Notes:
 For data generation, we separate video data acquisition from subsequent augmentation,
 as it is impractical to repeat frame reading as the training progresses.
 
 DataGenerator:
     Baseclass.
 
-DataGenerator_3Dconv: 
-    return BATCHED volumes without augmentation. Also used during inference. 
+DataGenerator_3Dconv:
+    return BATCHED volumes without augmentation. Also used during inference.
 
 DataGenerator_3Dconv_social:
-    return different volumes associated with the same frame. 
+    return different volumes associated with the same frame.
 """
+
 
 class DataGenerator(torch.utils.data.Dataset):
     """
@@ -89,8 +90,7 @@ class DataGenerator(torch.utils.data.Dataset):
         mirror: bool = False,
         predict_flag: bool = False,
     ):
-        """Initialize Generator.
-        """
+        """Initialize Generator."""
         self.dim_in = dim_in
         self.dim_out = dim_in
         self.batch_size = batch_size
@@ -131,9 +131,9 @@ class DataGenerator(torch.utils.data.Dataset):
         """
         return int(np.floor(len(self.list_IDs) / self.batch_size))
 
+
 class DataGenerator_3Dconv(DataGenerator):
-    """Update generator class to handle multiple experiments.
-    """
+    """Update generator class to handle multiple experiments."""
 
     def __init__(
         self,
@@ -281,9 +281,7 @@ class DataGenerator_3Dconv(DataGenerator):
                 K = self.camera_params[experimentID][camname]["K"]
                 R = self.camera_params[experimentID][camname]["R"]
                 t = self.camera_params[experimentID][camname]["t"]
-                M = torch.as_tensor(
-                    ops.camera_matrix(K, R, t), dtype=torch.float32
-                )
+                M = torch.as_tensor(ops.camera_matrix(K, R, t), dtype=torch.float32)
                 self.camera_params[experimentID][camname]["M"] = M
 
         print("Init took {} sec.".format(time.time() - ts))
@@ -302,7 +300,9 @@ class DataGenerator_3Dconv(DataGenerator):
                 (np.ndarray): Target
         """
         # Find list of IDs
-        list_IDs_temp = self.list_IDs[index*self.batch_size : (index+1)*self.batch_size]
+        list_IDs_temp = self.list_IDs[
+            index * self.batch_size : (index + 1) * self.batch_size
+        ]
         # Generate data
         X, y = self.__data_generation(list_IDs_temp)
 
@@ -322,10 +322,12 @@ class DataGenerator_3Dconv(DataGenerator):
         """
         ts = time.time()
         # Need this copy so that this_y does not change
-        this_y = torch.as_tensor(self.labels[ID]["data"][camname], dtype=torch.float32, device=self.device).round()
+        this_y = torch.as_tensor(
+            self.labels[ID]["data"][camname], dtype=torch.float32, device=self.device
+        ).round()
 
         if torch.all(torch.isnan(this_y)):
-            com_precrop = torch.zeros_like(this_y[:, 0])*float("nan")
+            com_precrop = torch.zeros_like(this_y[:, 0]) * float("nan")
         else:
             # For projecting points, we should not use this offset
             com_precrop = torch.mean(this_y, axis=1)
@@ -334,14 +336,25 @@ class DataGenerator_3Dconv(DataGenerator):
         this_y[1, :] = this_y[1, :] - self.crop_height[0]
         com = torch.mean(this_y, axis=1)
 
-        thisim = self.load_frame.load_vid_frame(
-            self.labels[ID]["frames"][camname],
-            camname,
-            extension=self.extension,
-        )[
+        session_idx = ID.split("_")[-1]
+        frame_idx = ID.split("_")[1]
+        view = camname.split("_")[-1]
+        imgdir = "/home/jovyan/vast/ckapoor/keypoint-tracking/slap_2m_sample/frames/"
+        frame_name = f"{session_idx}_{frame_idx}_{view}.jpg"
+        frame_path = os.path.join(imgdir, frame_name)
+        thisim = imageio.imread(frame_path)[
             self.crop_height[0] : self.crop_height[1],
             self.crop_width[0] : self.crop_width[1],
         ]
+
+        # thisim = self.load_frame.load_vid_frame(
+        #    self.labels[ID]["frames"][camname],
+        #    camname,
+        #    extension=self.extension,
+        # )[
+        #    self.crop_height[0] : self.crop_height[1],
+        #    self.crop_width[0] : self.crop_width[1],
+        # ]
         return self.pj_grid_post(
             X_grid, camname, ID, experimentID, com, com_precrop, thisim
         )
@@ -394,21 +407,38 @@ class DataGenerator_3Dconv(DataGenerator):
         # print('Frame loading took {} sec.'.format(time.time() - ts))
 
         if self.segmentation_model is not None:
-            input = [torchvision.transforms.functional.to_tensor(thisim.copy()).to(self.device,  dtype=torch.float)]
+            input = [
+                torchvision.transforms.functional.to_tensor(thisim.copy()).to(
+                    self.device, dtype=torch.float
+                )
+            ]
             prediction = self.segmentation_model(input)[0]
-            
+
             mask = prediction["masks"][0].permute(1, 2, 0).detach().cpu().numpy()
             mask = (mask >= 0.5).astype(np.uint8)
 
             # bbox = prediction["boxes"][0].cpu().numpy()
             # com_pred = ((bbox[0] + bbox[2]) / 2, (bbox[1]+bbox[3]) / 2)
-            
-            thisim *= mask # return the segmented foreground object
+
+            thisim *= mask  # return the segmented foreground object
 
         ts = time.time()
-        proj_grid = ops.project_to2d(
-            X_grid, self.camera_params[experimentID][camname]["M"], self.device
+
+        R = self.camera_params[experimentID][camname]["R"]
+        t = self.camera_params[experimentID][camname]["t"]
+        K = self.camera_params[experimentID][camname]["K"]
+        Rdistort = self.camera_params[experimentID][camname]["RDistort"]
+        Tdistort = self.camera_params[experimentID][camname]["TDistort"]
+
+        dist_vec = np.concatenate((Rdistort, Tdistort))
+
+        proj_grid = (
+            ops.project_to2d(pts=X_grid, rvec=R, tvec=t, K=K, distortion_vec=dist_vec)
+            .squeeze(1)
+            .to(self.device)
         )
+
+        # proj_grid = ops.project_to2d(
         # print('Project2d took {} sec.'.format(time.time() - ts))
 
         ts = time.time()
@@ -444,7 +474,7 @@ class DataGenerator_3Dconv(DataGenerator):
             X = rgb.permute(0, 2, 3, 4, 1)
 
         return X
-    
+
     def _init_vars(self, first_exp):
         X = torch.zeros(
             (
@@ -479,7 +509,7 @@ class DataGenerator_3Dconv(DataGenerator):
         )
 
         return X, y_3d, X_grid
-    
+
     def _generate_coord_grid(self, this_COM_3d):
         xgrid = torch.arange(
             self.vmin + this_COM_3d[0] + self.vsize / 2,
@@ -502,15 +532,19 @@ class DataGenerator_3Dconv(DataGenerator):
             dtype=torch.float32,
             device=self.device,
         )
-        (x_coord_3d, y_coord_3d, z_coord_3d) = torch.meshgrid(
-            xgrid, ygrid, zgrid
-        )
+        (x_coord_3d, y_coord_3d, z_coord_3d) = torch.meshgrid(xgrid, ygrid, zgrid)
 
         # torch.meshgrid current behavior is the same as np.meshgrid('ij')
         # need to convert to 'xy' for generating correct Gaussian targets
-        x_coord_3d, y_coord_3d, z_coord_3d = x_coord_3d.transpose(0, 1), y_coord_3d.transpose(0, 1), z_coord_3d.transpose(0, 1)
+        x_coord_3d, y_coord_3d, z_coord_3d = (
+            x_coord_3d.transpose(0, 1),
+            y_coord_3d.transpose(0, 1),
+            z_coord_3d.transpose(0, 1),
+        )
 
-        grid = torch.stack((x_coord_3d.flatten(), y_coord_3d.flatten(), z_coord_3d.flatten()), dim=1)
+        grid = torch.stack(
+            (x_coord_3d.flatten(), y_coord_3d.flatten(), z_coord_3d.flatten()), dim=1
+        )
 
         return (x_coord_3d, y_coord_3d, z_coord_3d), grid
 
@@ -524,20 +558,20 @@ class DataGenerator_3Dconv(DataGenerator):
                         + (coords_3d[0] - this_y_3d[0, j]) ** 2
                         + (coords_3d[2] - this_y_3d[2, j]) ** 2
                     )
-                    / (2 * self.out_scale ** 2)
+                    / (2 * self.out_scale**2)
                 )
                 # When the voxel grid is coarse, we will likely miss
                 # the peak of the probability distribution, as it
                 # will lie somewhere in the middle of a large voxel.
                 # So here we renormalize to [~, 1]
-        
+
         if self.mode == "coordinates":
             if this_y_3d.shape == y_3d[i].shape:
                 y_3d[i] = this_y_3d
             else:
                 msg = "Note: ignoring dimension mismatch in 3D labels"
                 warnings.warn(msg)
-        
+
         return y_3d
 
     def _adjust_vol_channels(self, X, y_3d, first_exp, num_cams):
@@ -566,9 +600,9 @@ class DataGenerator_3Dconv(DataGenerator):
         else:
             # Then leave the batch_size and num_cams combined
             y_3d = y_3d.repeat(num_cams, 1, 1, 1, 1)
-        
+
         return X, y_3d
- 
+
     def _convert_tensor_to_numpy(self, X, y_3d, X_grid):
         # ts = time.time()
         if torch.is_tensor(X):
@@ -589,10 +623,10 @@ class DataGenerator_3Dconv(DataGenerator):
 
         # if self.expval:
         #     inputs.append(X_grid)
-        
+
         if self.var_reg:
             targets.append(torch.zeros((self.batch_size, 1)))
-        
+
         return inputs, targets
 
     def __data_generation(self, list_IDs_temp):
@@ -617,20 +651,19 @@ class DataGenerator_3Dconv(DataGenerator):
             num_cams = len(self.camnames[experimentID])
 
             # For 3D ground truth (keypoints, COM)
-            this_y_3d = torch.as_tensor(self.labels_3d[ID],
+            this_y_3d = torch.as_tensor(
+                self.labels_3d[ID],
                 dtype=torch.float32,
                 device=self.device,
             )
             this_COM_3d = torch.as_tensor(
-                self.com3d[ID], 
-                dtype=torch.float32, 
-                device=self.device
+                self.com3d[ID], dtype=torch.float32, device=self.device
             )
 
             # Create and project the grid here,
             coords_3d, grid = self._generate_coord_grid(this_COM_3d)
             X_grid[i] = grid
-            
+
             # Generate training targets
             y_3d = self._generate_targets(i, y_3d, this_y_3d, coords_3d)
 
@@ -654,7 +687,7 @@ class DataGenerator_3Dconv(DataGenerator):
                 args = [X_grid[i], self.camnames[experimentID][c], ID, experimentID]
                 if self.mirror:
                     args.append(loadim)
-                
+
                 arglist.append(args)
 
             result = self.threadpool.starmap(self.pj_method, arglist)
@@ -666,7 +699,7 @@ class DataGenerator_3Dconv(DataGenerator):
 
         # adjust volume channels
         X, y_3d = self._adjust_vol_channels(X, y_3d, first_exp, num_cams)
-        
+
         # 3dprob is required for *training* MAX networks
         if self.mode == "3dprob":
             y_3d = y_3d.permute([0, 2, 3, 4, 1])
@@ -682,6 +715,7 @@ class DataGenerator_3Dconv(DataGenerator):
 
         return self._finalize_samples(X, y_3d, X_grid)
 
+
 class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
     def __init__(
         self,
@@ -692,9 +726,9 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         clusterIDs: List,
         com3d: Dict,
         tifdirs: List,
-        n_instances = 2,
+        n_instances=2,
         occlusion=False,
-        **kwargs
+        **kwargs,
     ):
         DataGenerator_3Dconv.__init__(
             self,
@@ -705,14 +739,16 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
             clusterIDs,
             com3d,
             tifdirs,
-            **kwargs
+            **kwargs,
         )
 
         self.n_instances = n_instances
         self.batch_size = n_instances
         self.occlusion = occlusion
-        self.list_IDs = [ID for ID in self.list_IDs if int(ID.split("_")[0]) % n_instances == 0]
-    
+        self.list_IDs = [
+            ID for ID in self.list_IDs if int(ID.split("_")[0]) % n_instances == 0
+        ]
+
     def __len__(self) -> int:
         """Denote the number of batches per epoch.
 
@@ -736,7 +772,9 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         thisID = self.list_IDs[index]
         experimentID, sampleID = thisID.split("_")
 
-        list_IDs_temp = [str(int(experimentID)+i)+"_"+sampleID for i in range(self.n_instances)]
+        list_IDs_temp = [
+            str(int(experimentID) + i) + "_" + sampleID for i in range(self.n_instances)
+        ]
         # Generate data
         X, y = self.__data_generation(list_IDs_temp)
 
@@ -768,7 +806,7 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
             self.crop_height[0] : self.crop_height[1],
             self.crop_width[0] : self.crop_width[1],
         ]
-        
+
         for i in range(self.n_instances):
             this_y = torch.as_tensor(
                 self.labels[IDs[i]]["data"][camnames[i]],
@@ -777,7 +815,7 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
             ).round()
 
             if torch.all(torch.isnan(this_y)):
-                com_precrop = torch.zeros_like(this_y[:, 0])*float("nan")
+                com_precrop = torch.zeros_like(this_y[:, 0]) * float("nan")
             else:
                 com_precrop = torch.mean(this_y, axis=1)
 
@@ -826,7 +864,17 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
             X_grid, camname, ID, experimentID, com, com_precrop, passim
         )
 
-    def visualize_2d(self, im, IDs, camnames, camcoords, bb1, bb2, scores, savedir='./vis_occlusion/2021_07_03_M2_M3'):
+    def visualize_2d(
+        self,
+        im,
+        IDs,
+        camnames,
+        camcoords,
+        bb1,
+        bb2,
+        scores,
+        savedir="./vis_occlusion/2021_07_03_M2_M3",
+    ):
         if not os.path.exists(savedir):
             os.makedirs(savedir)
 
@@ -834,29 +882,49 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         fname = IDs[0].split("_")[-1] + "_" + camnames[0].split("_")[-1] + ".jpg"
         fig, ax = plt.subplots(1, 1)
         ax.imshow(im)
-        ax.set_title("B: {:.2f}, {:.2f} | R: {:.2f}, {:.2f}".format(depths[0], scores[0], depths[1], scores[1]))
+        ax.set_title(
+            "B: {:.2f}, {:.2f} | R: {:.2f}, {:.2f}".format(
+                depths[0], scores[0], depths[1], scores[1]
+            )
+        )
         # Create a Rectangle patch
-        rect1 = patches.Rectangle((bb1[0], bb1[1]), bb1[2]-bb1[0], bb1[3]-bb1[1], linewidth=1, edgecolor='b', facecolor='none')
-        rect2 = patches.Rectangle((bb2[0], bb2[1]), bb2[2]-bb2[0], bb2[3]-bb2[1], linewidth=1, edgecolor='r', facecolor='none')
+        rect1 = patches.Rectangle(
+            (bb1[0], bb1[1]),
+            bb1[2] - bb1[0],
+            bb1[3] - bb1[1],
+            linewidth=1,
+            edgecolor="b",
+            facecolor="none",
+        )
+        rect2 = patches.Rectangle(
+            (bb2[0], bb2[1]),
+            bb2[2] - bb2[0],
+            bb2[3] - bb2[1],
+            linewidth=1,
+            edgecolor="r",
+            facecolor="none",
+        )
 
         # Add the patch to the Axes
         ax.add_patch(rect1)
         ax.add_patch(rect2)
         fig.savefig(os.path.join(savedir, fname))
         plt.close(fig)
-    
+
     @classmethod
     def apply_mask(self, image, mask, color, alpha=0.3):
-        """Apply the given mask to the image.
-        """
+        """Apply the given mask to the image."""
         for c in range(3):
-            image[:, :, c] = np.where(mask == 1,
-                                    image[:, :, c] *
-                                    (1 - alpha) + alpha * color[c] * 255,
-                                    image[:, :, c])
+            image[:, :, c] = np.where(
+                mask == 1,
+                image[:, :, c] * (1 - alpha) + alpha * color[c] * 255,
+                image[:, :, c],
+            )
         return image
 
-    def visualize_mask(self, IDs, camnames, im, masks, coms, msg, savedir='./vis_occlusion_masks'):
+    def visualize_mask(
+        self, IDs, camnames, im, masks, coms, msg, savedir="./vis_occlusion_masks"
+    ):
         colors = [(0, 255, 125), (252, 51, 51)]
         if not os.path.exists(savedir):
             print("Saving to ", savedir)
@@ -874,11 +942,21 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         ax.scatter(x=com2[0], y=com2[1], color="red")
 
         ax.set_title(msg)
-        
+
         fig.savefig(os.path.join(savedir, fname))
         plt.close(fig)
 
-    def pj_grid_post(self, X_grids, camnames, IDs, experimentIDs, coms, com_precrops, thisims, com_3ds):
+    def pj_grid_post(
+        self,
+        X_grids,
+        camnames,
+        IDs,
+        experimentIDs,
+        coms,
+        com_precrops,
+        thisims,
+        com_3ds,
+    ):
         # separate the porjection and sampling into its own function so that
         # when mirror == True, this can be called directly
         if self.crop_im:
@@ -890,49 +968,72 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
                         device=self.device,
                     )
                 else:
-                    thisims[i] = processing.cropcom(thisims[i], coms[i], size=self.dim_in[0])[0] 
+                    thisims[i] = processing.cropcom(
+                        thisims[i], coms[i], size=self.dim_in[0]
+                    )[0]
         # print('Frame loading took {} sec.'.format(time.time() - ts))
-        
+
         # convert 3D COMs into camera coordinate frame for occlusion check
-        com_3ds_cam = ops.world_to_cam(
-            com_3ds.clone(), 
-            self.camera_params[experimentIDs[0]][camnames[0]]["M"],
-            self.device
-        ).detach().cpu().numpy()
+        com_3ds_cam = (
+            ops.world_to_cam(
+                com_3ds.clone(),
+                self.camera_params[experimentIDs[0]][camnames[0]]["M"],
+                self.device,
+            )
+            .detach()
+            .cpu()
+            .numpy()
+        )
         depths = com_3ds_cam[:, 2]
         com_2ds_pix = com_3ds_cam[:, :2] / com_3ds_cam[:, 2:]
 
         # generate bounding boxes in pixel coordinates
         # this only APPROXIMATES the occlusion between different animals
         w, h = 200, 150
-        bb1 = [com_2ds_pix[0, 0]-w, com_2ds_pix[0, 1]-h, com_2ds_pix[0, 0]+w, com_2ds_pix[0, 1]+h]
-        bb2 = [com_2ds_pix[1, 0]-w, com_2ds_pix[1, 1]-h, com_2ds_pix[1, 0]+w, com_2ds_pix[1, 1]+h]
+        bb1 = [
+            com_2ds_pix[0, 0] - w,
+            com_2ds_pix[0, 1] - h,
+            com_2ds_pix[0, 0] + w,
+            com_2ds_pix[0, 1] + h,
+        ]
+        bb2 = [
+            com_2ds_pix[1, 0] - w,
+            com_2ds_pix[1, 1] - h,
+            com_2ds_pix[1, 0] + w,
+            com_2ds_pix[1, 1] + h,
+        ]
 
         # check depths
         instance_front, instance_back = np.argmin(depths), np.argmax(depths)
-        occlusion_scores = np.zeros((self.n_instances)) # the foreground animal is not occluded
+        occlusion_scores = np.zeros(
+            (self.n_instances)
+        )  # the foreground animal is not occluded
         # check overlap region
         occlusion_scores[instance_back] = processing.bbox_iou(bb1, bb2)
 
         # self.visualize_2d(thisims[0], IDs, camnames, com_3ds_cam, bb1, bb2, occlusion_scores)
-        
+
         if self.segmentation_model is not None:
-            # if there is no occlusion, 
-            # the model should be able to detect `n_instances`` masks 
+            # if there is no occlusion,
+            # the model should be able to detect `n_instances`` masks
             # in this specific camera view, with high confidence (score > 0.9)
             # occlusion_flag = (occlusion_scores[instance_front] > 0.8)
             # initialize masks as ones ==> no influence if no masks predicted
             masks = np.ones((self.n_instances, *thisims[0].shape[:2], 1))
 
             # get mask predictions
-            input = [torchvision.transforms.functional.to_tensor(thisims[0].copy()).to(self.device,  dtype=torch.float)]
+            input = [
+                torchvision.transforms.functional.to_tensor(thisims[0].copy()).to(
+                    self.device, dtype=torch.float
+                )
+            ]
             prediction = self.segmentation_model(input)[0]
             # filter by confidence scores
-            filtering_by_scores = (prediction["scores"] > 0.85)
+            filtering_by_scores = prediction["scores"] > 0.85
             raw_masks = prediction["masks"][filtering_by_scores]
             # print(f"{len(raw_masks)} masks detected.")
             if len(raw_masks) > self.n_instances:
-                raw_masks = raw_masks[:self.n_instances]
+                raw_masks = raw_masks[: self.n_instances]
 
             # adjust dimension, convert to numpy
             masks_unordered = []
@@ -945,15 +1046,15 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
             msg = ""
             if len(raw_masks) == 0:
                 msg = "No mask predicted."
-            
+
             elif len(raw_masks) < self.n_instances:
                 counts = processing.compute_support(com_2ds_pix, masks_unordered[0])
                 assignment = np.argmax(counts)
                 masks[assignment] = masks_unordered[0]
-                
+
                 if assignment == instance_front:
                     msg = "Mask only predicted on the foreground animal."
-                    non_assignment =((np.arange(self.n_instances)) != assignment)
+                    non_assignment = (np.arange(self.n_instances)) != assignment
                     # masks[non_assignment] = (masks_unordered[0] == 0).astype(np.uint8)
                 else:
                     msg = "Mask only predicted on animal behind."
@@ -962,10 +1063,10 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
                 # remove intersected region
                 # mask_intersect = processing.mask_intersection(masks_unordered[0], masks_unordered[1])
                 # masks_unordered = [mask-mask_intersect for mask in masks_unordered]
-            
+
                 counts0 = processing.compute_support(com_2ds_pix, masks_unordered[0])
                 counts1 = processing.compute_support(com_2ds_pix, masks_unordered[1])
-                
+
                 assignment0 = np.argmax(counts0)
                 assignment1 = np.argmax(counts1)
 
@@ -974,14 +1075,14 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
                     msg = "Perfect matching."
                     masks[assignment0] = masks_unordered[0]
                     masks[assignment1] = masks_unordered[1]
-                elif (assignment0 == instance_front):
+                elif assignment0 == instance_front:
                     msg = "Mask ambiguity. Assume the higher confidence mask belongs to the front."
                     masks[instance_front] = masks_unordered[0]
                     masks[instance_back] = masks_unordered[1]
                 else:
                     msg = "Mask ambiguity."
-            
-            # self.visualize_mask(IDs, camnames, thisims[0].copy(), masks, com_2ds_pix, msg)            
+
+            # self.visualize_mask(IDs, camnames, thisims[0].copy(), masks, com_2ds_pix, msg)
             for i, im in enumerate(thisims):
                 # thisims[i] = im * masks[i]
                 thisims[i] = np.tile(masks[i], (1, 1, 3))
@@ -990,7 +1091,9 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         for i in range(self.n_instances):
             # ts = time.time()
             proj_grid = ops.project_to2d(
-                X_grids[i], self.camera_params[experimentIDs[i]][camnames[i]]["M"], self.device
+                X_grids[i],
+                self.camera_params[experimentIDs[i]][camnames[i]]["M"],
+                self.device,
             )
             # print('Project2d took {} sec.'.format(time.time() - ts))
 
@@ -999,8 +1102,12 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
                 proj_grid = ops.distortPoints(
                     proj_grid[:, :2],
                     self.camera_params[experimentIDs[i]][camnames[i]]["K"],
-                    np.squeeze(self.camera_params[experimentIDs[i]][camnames[i]]["RDistort"]),
-                    np.squeeze(self.camera_params[experimentIDs[i]][camnames[i]]["TDistort"]),
+                    np.squeeze(
+                        self.camera_params[experimentIDs[i]][camnames[i]]["RDistort"]
+                    ),
+                    np.squeeze(
+                        self.camera_params[experimentIDs[i]][camnames[i]]["TDistort"]
+                    ),
                     self.device,
                 )
                 proj_grid = proj_grid.transpose(0, 1)
@@ -1016,7 +1123,9 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
                 proj_grid[:, 0] = proj_grid[:, 0] - self.crop_width[0]
                 proj_grid[:, 1] = proj_grid[:, 1] - self.crop_height[0]
 
-            rgb = ops.sample_grid(thisims[i], proj_grid, self.device, method=self.interp)
+            rgb = ops.sample_grid(
+                thisims[i], proj_grid, self.device, method=self.interp
+            )
 
             if (
                 ~torch.any(torch.isnan(com_precrops[i]))
@@ -1048,11 +1157,9 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         X, y_3d, X_grid = self._init_vars(first_exp)
 
         com_3ds = torch.zeros(
-            (self.batch_size, 3),
-            dtype=torch.float32,
-            device=self.device
+            (self.batch_size, 3), dtype=torch.float32, device=self.device
         )
-        
+
         # Generate data
         experimentIDs = []
         for i, ID in enumerate(list_IDs_temp):
@@ -1066,9 +1173,7 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
                 device=self.device,
             )
             this_COM_3d = torch.as_tensor(
-                self.com3d[ID], 
-                dtype=torch.float32, 
-                device=self.device
+                self.com3d[ID], dtype=torch.float32, device=self.device
             )
 
             com_3ds[i] = this_COM_3d
@@ -1087,21 +1192,23 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         num_cams = len(self.camnames[experimentIDs[0]])
         occlusion_scores = np.zeros((self.batch_size, num_cams), dtype=float)
 
-        for c in range(num_cams):  
-            arglist.append([
-                X_grid, 
-                [self.camnames[experimentID][c] for experimentID in experimentIDs], 
-                list_IDs_temp, 
-                experimentIDs, 
-                com_3ds]
+        for c in range(num_cams):
+            arglist.append(
+                [
+                    X_grid,
+                    [self.camnames[experimentID][c] for experimentID in experimentIDs],
+                    list_IDs_temp,
+                    experimentIDs,
+                    com_3ds,
+                ]
             )
         result = self.threadpool.starmap(self.proj_grid, arglist)
-        
+
         for c in range(num_cams):
             for j in range(self.n_instances):
                 ic = c + j * num_cams
-                X[ic, ...] = result[c][0][j][0] #[H, W, D, C]
-            occlusion_scores[:, c] = result[c][1] # [2]
+                X[ic, ...] = result[c][0][j][0]  # [H, W, D, C]
+            occlusion_scores[:, c] = result[c][1]  # [2]
         # print('MP took {} sec.'.format(time.time()-ts))
 
         # adjust camera channels
@@ -1121,14 +1228,18 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
         X, y_3d, X_grid = self._convert_tensor_to_numpy(X, y_3d, X_grid)
 
         return self._finalize_samples(X, y_3d, X_grid, occlusion_scores)
-    
+
     def _downscale_occluded_views(self, X, occlusion_scores):
         """
         X: [BS, H, W, D, n_cams*3]
         occlusion_scores: [BS, n_cams]
         """
-        occluded_X = np.reshape(X.copy(), (*X.shape[:4], occlusion_scores.shape[-1], -1))
-        occlusion_scores = occlusion_scores[:, np.newaxis, np.newaxis, np.newaxis, :, np.newaxis]
+        occluded_X = np.reshape(
+            X.copy(), (*X.shape[:4], occlusion_scores.shape[-1], -1)
+        )
+        occlusion_scores = occlusion_scores[
+            :, np.newaxis, np.newaxis, np.newaxis, :, np.newaxis
+        ]
 
         occluded_X *= occlusion_scores
 
@@ -1144,19 +1255,20 @@ class DataGenerator_3Dconv_social(DataGenerator_3Dconv):
 
         if self.expval:
             inputs.append(X_grid)
-        
+
         if self.occlusion:
-            #occluded_X = self._downscale_occluded_views(X, occlusion_scores)
+            # occluded_X = self._downscale_occluded_views(X, occlusion_scores)
             inputs.append(occlusion_scores)
-        
+
         if self.var_reg:
             targets.append(torch.zeros((self.batch_size, 1)))
-        
+
         return inputs, targets
+
 
 class MultiviewImageGenerator(DataGenerator_3Dconv):
     def __init__(self, resize=True, image_size=256, crop=True, crop_size=384, **kwargs):
-        
+
         super(MultiviewImageGenerator, self).__init__(**kwargs)
         self.image_size = image_size
         self.resize = resize
@@ -1174,22 +1286,29 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             for camname in self.camnames[experimentID]:
                 param = self.camera_params[experimentID][camname]
                 self.camera_objs[experimentID][camname] = Camera(
-                    R=param["R"], t=param["t"], K=param["K"], 
-                    tdist=param["TDistort"], rdist=param["RDistort"]
+                    R=param["R"],
+                    t=param["t"],
+                    K=param["K"],
+                    tdist=param["TDistort"],
+                    rdist=param["RDistort"],
                 )
+
     def _get_bbox(self, com_precrop):
         return (
-            com_precrop[1]-self.crop_size//2, 
-            com_precrop[0]-self.crop_size//2, 
-            com_precrop[1]+self.crop_size//2, 
-            com_precrop[0]+self.crop_size//2
+            com_precrop[1] - self.crop_size // 2,
+            com_precrop[0] - self.crop_size // 2,
+            com_precrop[1] + self.crop_size // 2,
+            com_precrop[0] + self.crop_size // 2,
         )
-    
-    def _save_image_bbox(self, 
-        list_IDs, X, y_2d, 
+
+    def _save_image_bbox(
+        self,
+        list_IDs,
+        X,
+        y_2d,
         bbox_offset=(20, 30, 20, 20),
-        imdir='/media/mynewdrive/datasets/detection/images', 
-        annotdir='/media/mynewdrive/datasets/detection/annotations'
+        imdir="/media/mynewdrive/datasets/detection/images",
+        annotdir="/media/mynewdrive/datasets/detection/annotations",
     ):
         if not os.path.exists(imdir):
             os.makedirs(imdir)
@@ -1203,9 +1322,14 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
 
                 # get tight bounding box from y_2d
                 kpts = y[cam].cpu().numpy()
-                x1, y1, x2, y2 = kpts[0].min(), kpts[1].min(), kpts[0].max(), kpts[1].max()
-                x1, x2 = x1-bbox_offset[0], x2+bbox_offset[2]
-                y1, y2 = y1-bbox_offset[1], y2+bbox_offset[3]
+                x1, y1, x2, y2 = (
+                    kpts[0].min(),
+                    kpts[1].min(),
+                    kpts[0].max(),
+                    kpts[1].max(),
+                )
+                x1, x2 = x1 - bbox_offset[0], x2 + bbox_offset[2]
+                y1, y2 = y1 - bbox_offset[1], y2 + bbox_offset[3]
 
                 annot = {
                     "file_name": os.path.join(imdir, fname),
@@ -1216,14 +1340,17 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
 
                 # fig, ax = plt.subplots()
                 # ax.imshow(im)
-                
+
                 # rect = patches.Rectangle((x1, y1), x2-x1, y2-y1, color='dodgerblue', fill=False)
                 # ax.add_patch(rect)
 
                 # ax.scatter(kpts[0], kpts[1], marker='.', color='r', linewidths=0.5)
 
                 # fig.savefig(os.path.join(imdir, fname+".jpg"))
-                cv2.imwrite(os.path.join(imdir, fname+".png"), cv2.cvtColor(im, cv2.COLOR_RGB2BGR))
+                cv2.imwrite(
+                    os.path.join(imdir, fname + ".png"),
+                    cv2.cvtColor(im, cv2.COLOR_RGB2BGR),
+                )
                 np.save(os.path.join(annotdir, fname), annot)
 
     def _visualize_multiview(self, ID, ims, y_2d, savedir="debug_image"):
@@ -1236,10 +1363,16 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
 
         for i, ax in enumerate(axes):
             ax.imshow(ims[i].cpu().permute(1, 2, 0).numpy())
-        
+
             # Plot keypoints
-            ax.scatter(y_2d[i, 0].cpu().numpy(), y_2d[i, 1].cpu().numpy(), marker='.', color='r', linewidths=0.5)
-            
+            ax.scatter(
+                y_2d[i, 0].cpu().numpy(),
+                y_2d[i, 1].cpu().numpy(),
+                marker=".",
+                color="r",
+                linewidths=0.5,
+            )
+
         fig.savefig(os.path.join(savedir, fname))
         plt.close(fig)
 
@@ -1254,16 +1387,16 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             extension=self.extension,
         )
         cam = deepcopy(self.camera_objs[experimentID][camname])
-        new_y = this_y.clone() #[2, 23]
-        
+        new_y = this_y.clone()  # [2, 23]
+
         if self.crop:
             # crop images due to memory constraints
-            im, cropdim = processing.cropcom(im, com_precrop, size=self.crop_size) 
+            im, cropdim = processing.cropcom(im, com_precrop, size=self.crop_size)
             # bbox = self._get_bbox(com_precrop)
             # cam.update_after_crop(bbox)
             new_y[0, :] -= cropdim[2]
             new_y[1, :] -= cropdim[0]
-        
+
         # resize
         if self.resize:
             # old_height, old_width = im.shape[:2]
@@ -1274,9 +1407,9 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             im = processing.downsample_batch(im[np.newaxis, ...], fac=self.ds_fac)
             im = np.squeeze(im)
             new_y /= self.ds_fac
-        
+
         return im, cam, new_y
-    
+
     def __getitem__(self, index: int):
         """Generate one batch of data.
 
@@ -1289,7 +1422,9 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
                 (np.ndarray): Target
         """
         # Find list of IDs
-        list_IDs_temp = self.list_IDs[index*self.batch_size : (index+1)*self.batch_size]
+        list_IDs_temp = self.list_IDs[
+            index * self.batch_size : (index + 1) * self.batch_size
+        ]
         # Generate data
         X, y = self.__data_generation(list_IDs_temp)
 
@@ -1300,8 +1435,8 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
         first_exp = int(self.list_IDs[0].split("_")[0])
         X, y_3d, X_grid = self._init_vars(first_exp)
         # X = X.new_zeros(
-        #     (self.batch_size, 
-        #     len(self.camnames[first_exp]), 
+        #     (self.batch_size,
+        #     len(self.camnames[first_exp]),
         #     3, 512, 512
         # ))
         X = []
@@ -1312,20 +1447,19 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
             num_cams = len(self.camnames[experimentID])
 
             # For 3D ground truth (keypoints, COM)
-            this_y_3d = torch.as_tensor(self.labels_3d[ID],
+            this_y_3d = torch.as_tensor(
+                self.labels_3d[ID],
                 dtype=torch.float32,
                 device=self.device,
             )
             this_COM_3d = torch.as_tensor(
-                self.com3d[ID], 
-                dtype=torch.float32, 
-                device=self.device
+                self.com3d[ID], dtype=torch.float32, device=self.device
             )
 
             # Create and project the grid here,
             coords_3d, grid = self._generate_coord_grid(this_COM_3d)
             X_grid[i] = grid
-            
+
             # Generate training targets
             y_3d = self._generate_targets(i, y_3d, this_y_3d, coords_3d)
 
@@ -1335,27 +1469,30 @@ class MultiviewImageGenerator(DataGenerator_3Dconv):
                 arglist.append([ID, self.camnames[experimentID][c], experimentID])
             results = self.threadpool.starmap(self._load_im, arglist)
 
-            ims = np.stack([r[0] for r in results], axis=0).astype(np.uint8) #[6, H, W, 3]
+            ims = np.stack([r[0] for r in results], axis=0).astype(
+                np.uint8
+            )  # [6, H, W, 3]
             ims = torch.tensor(ims).permute(0, 3, 1, 2)
             X.append(ims)
 
             # also need camera params for each view
-            cameras.append([r[1] for r in results]) #[BS, 6]
+            cameras.append([r[1] for r in results])  # [BS, 6]
 
             # potentially need 2d labels as well
             y_2d.append(torch.stack([r[2] for r in results], dim=0))
 
         X = torch.stack(X, dim=0)
-        y_2d = torch.stack(y_2d, dim=0) #[BS, 6, 2, n_joints]
-        
+        y_2d = torch.stack(y_2d, dim=0)  # [BS, 6, 2, n_joints]
+
         # self._visualize_multiview(list_IDs_temp[0], X[0], y_2d[0])
         # self._save_image_bbox(list_IDs_temp, X, y_2d)
 
         return (X.cpu(), X_grid.cpu(), cameras), (y_3d.cpu(), y_2d.cpu())
 
+
 class DataGenerator_Dynamic(DataGenerator_3Dconv):
     def __init__(
-        self, 
+        self,
         list_IDs,
         labels,
         labels_3d,
@@ -1363,8 +1500,8 @@ class DataGenerator_Dynamic(DataGenerator_3Dconv):
         clusterIDs,
         com3d,
         tifdirs,
-        dim_dict=None, 
-        **kwargs
+        dim_dict=None,
+        **kwargs,
     ):
         DataGenerator_3Dconv.__init__(
             self,
@@ -1375,15 +1512,15 @@ class DataGenerator_Dynamic(DataGenerator_3Dconv):
             clusterIDs,
             com3d,
             tifdirs,
-            **kwargs
+            **kwargs,
         )
 
         self.dim_dict = dim_dict
 
     def _generate_coord_grid(self, this_COM_3d, bbox_dim):
         # print(this_COM_3d, bbox_dim)
-        bbox_min = -5*(bbox_dim // 10)  # rounding
-        bbox_max = 5*(bbox_dim // 10)
+        bbox_min = -5 * (bbox_dim // 10)  # rounding
+        bbox_max = 5 * (bbox_dim // 10)
 
         # if (bbox_max < self.vmax*0.4).sum() > 0:
         #     # print("degenerate prediction")
@@ -1391,7 +1528,7 @@ class DataGenerator_Dynamic(DataGenerator_3Dconv):
         #     bbox_max = bbox_max.new_ones(bbox_max.shape) * self.vmax*0.8
         bbox_dim = bbox_max - bbox_min
         vsizes = (bbox_dim) / self.nvox
-        
+
         xgrid = torch.arange(
             bbox_min[0] + this_COM_3d[0] + vsizes[0] / 2,
             this_COM_3d[0] + bbox_max[0],
@@ -1413,22 +1550,19 @@ class DataGenerator_Dynamic(DataGenerator_3Dconv):
             dtype=torch.float32,
             device=self.device,
         )
-        (x_coord_3d, y_coord_3d, z_coord_3d) = torch.meshgrid(
-            xgrid, ygrid, zgrid
-        )
+        (x_coord_3d, y_coord_3d, z_coord_3d) = torch.meshgrid(xgrid, ygrid, zgrid)
 
         grid = torch.stack(
             (
-            x_coord_3d.transpose(0, 1).flatten(),
-            y_coord_3d.transpose(0, 1).flatten(),
-            z_coord_3d.transpose(0, 1).flatten(),
+                x_coord_3d.transpose(0, 1).flatten(),
+                y_coord_3d.transpose(0, 1).flatten(),
+                z_coord_3d.transpose(0, 1).flatten(),
             ),
             dim=1,
         )
 
         return (x_coord_3d, y_coord_3d, z_coord_3d), grid
 
-        
     def __data_generation(self, list_IDs_temp):
         # Initialization
         first_exp = int(self.list_IDs[0].split("_")[0])
@@ -1439,21 +1573,20 @@ class DataGenerator_Dynamic(DataGenerator_3Dconv):
             num_cams = len(self.camnames[experimentID])
 
             # For 3D ground truth (keypoints, COM)
-            this_y_3d = torch.as_tensor(self.labels_3d[ID],
+            this_y_3d = torch.as_tensor(
+                self.labels_3d[ID],
                 dtype=torch.float32,
                 device=self.device,
             )
             this_COM_3d = torch.as_tensor(
-                self.com3d[ID], 
-                dtype=torch.float32, 
-                device=self.device
+                self.com3d[ID], dtype=torch.float32, device=self.device
             )
             bbox_dim = torch.as_tensor(self.dim_dict[ID], device=self.device)
 
             # Create and project the grid here,
             coords_3d, grid = self._generate_coord_grid(this_COM_3d, bbox_dim)
             X_grid[i] = grid
-            
+
             # Generate training targets
             y_3d = self._generate_targets(i, y_3d, this_y_3d, coords_3d)
 
@@ -1477,7 +1610,7 @@ class DataGenerator_Dynamic(DataGenerator_3Dconv):
                 args = [X_grid[i], self.camnames[experimentID][c], ID, experimentID]
                 if self.mirror:
                     args.append(loadim)
-                
+
                 arglist.append(args)
 
             result = self.threadpool.starmap(self.pj_method, arglist)
@@ -1488,7 +1621,7 @@ class DataGenerator_Dynamic(DataGenerator_3Dconv):
 
         # adjust volume channels
         X, y_3d = self._adjust_vol_channels(X, y_3d, first_exp, num_cams)
-        
+
         # 3dprob is required for *training* MAX networks
         if self.mode == "3dprob":
             y_3d = y_3d.permute([0, 2, 3, 4, 1])
@@ -1503,14 +1636,17 @@ class DataGenerator_Dynamic(DataGenerator_3Dconv):
         X, y_3d, X_grid = self._convert_tensor_to_numpy(X, y_3d, X_grid)
 
         return self._finalize_samples(X, y_3d, X_grid)
-    
+
     def __getitem__(self, index: int):
         # Find list of IDs
-        list_IDs_temp = self.list_IDs[index*self.batch_size : (index+1)*self.batch_size]
+        list_IDs_temp = self.list_IDs[
+            index * self.batch_size : (index + 1) * self.batch_size
+        ]
         # Generate data
         X, y = self.__data_generation(list_IDs_temp)
 
         return X, y
+
 
 _DEFAULT_CAM_NAMES = [
     "CameraR",
@@ -1521,6 +1657,7 @@ _DEFAULT_CAM_NAMES = [
     "CameraE",
 ]
 _EXEP_MSG = "Desired Label channels and ground truth channels do not agree"
+
 
 class DataGenerator_COM(torch.utils.data.Dataset):
     def __init__(
@@ -1582,10 +1719,9 @@ class DataGenerator_COM(torch.utils.data.Dataset):
         self.mono = mono
 
         self.predict_flag = predict_flag
-        self.load_frame = LoadVideoFrame(self._N_VIDEO_FRAMES,
-                                         self.vidreaders,
-                                         self.camnames,
-                                         self.predict_flag)
+        self.load_frame = LoadVideoFrame(
+            self._N_VIDEO_FRAMES, self.vidreaders, self.camnames, self.predict_flag
+        )
 
     def __len__(self):
         """Denote the number of batches per epoch."""
@@ -1707,7 +1843,7 @@ class DataGenerator_COM(torch.utils.data.Dataset):
                                     (y_coord - this_y[1, instance]) ** 2
                                     + (x_coord - this_y[0, instance]) ** 2
                                 )
-                                / (2 * self.out_scale ** 2)
+                                / (2 * self.out_scale**2)
                             )
                         )
 

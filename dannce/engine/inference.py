@@ -40,9 +40,7 @@ def print_checkpoint(
     return end_time
 
 
-def predict_batch(
-    model, generator, n_frame: int, params: Dict, device
-) -> np.ndarray:
+def predict_batch(model, generator, n_frame: int, params: Dict, device) -> np.ndarray:
     """Predict for a single batch and reformat output.
 
     Args:
@@ -54,7 +52,11 @@ def predict_batch(
     No Longer Returned:
         np.ndarray: n_batch x n_cam x h x w x c predictions
     """
-    im = torch.from_numpy(generator.__getitem__(n_frame)[0]).permute(0, 3, 1, 2).to(device)
+    im = (
+        torch.from_numpy(generator.__getitem__(n_frame)[0])
+        .permute(0, 3, 1, 2)
+        .to(device)
+    )
     pred = model(im)
     if params["mirror"]:
         n_cams = 1
@@ -548,6 +550,7 @@ def triangulate_multi_instance_single_channel(
     save_data[sample_id]["triangulation"]["instances"] = final3d
     return save_data
 
+
 def infer_com(
     start_ind: int,
     end_ind: int,
@@ -562,7 +565,7 @@ def infer_com(
     sample_save: int = 100,
 ):
     """Perform COM detection over a set of frames.
-    
+
     Args:
         start_ind (int): Starting frame index
         end_ind (int): Ending frame index
@@ -577,9 +580,9 @@ def infer_com(
     """
     end_time = time.time()
     for n_frame in tqdm(range(start_ind, end_ind)):
-        #end_time = print_checkpoint(
+        # end_time = print_checkpoint(
         #    n_frame, start_ind, end_time, sample_save=sample_save
-        #)
+        # )
         pred_batch = predict_batch(model, generator, n_frame, params, device)
         n_batches = pred_batch.shape[0]
 
@@ -593,7 +596,9 @@ def infer_com(
                 pred = pred_batch[n_batch, 0]
                 pred = np.transpose(pred, (2, 0, 1))
             elif params["mirror"]:
-                raise Exception("mirror mode with multiple animal instances not currently supported.")
+                raise Exception(
+                    "mirror mode with multiple animal instances not currently supported."
+                )
             elif params["n_instances"] > 1 and params["n_channels_out"] > 1:
                 pred = pred_batch[n_batch, ...]
             else:
@@ -638,6 +643,7 @@ def infer_com(
                 )
     return save_data
 
+
 def infer_dannce(
     generator,
     params: Dict,
@@ -646,7 +652,7 @@ def infer_dannce(
     device: Text,
     n_chn: int,
     sil_generator=None,
-    save_heatmaps=False
+    save_heatmaps=False,
 ):
     """Perform dannce detection over a set of frames.
 
@@ -661,7 +667,9 @@ def infer_dannce(
         n_chn (int): Number of output channels
     """
     if params["maxbatch"] != "max" and params["maxbatch"] > len(generator):
-        print("Maxbatch was set to a larger number of matches than exist in the video. Truncating")
+        print(
+            "Maxbatch was set to a larger number of matches than exist in the video. Truncating"
+        )
         print_and_set(params, "maxbatch", len(generator))
 
     if params["maxbatch"] == "max":
@@ -681,9 +689,9 @@ def infer_dannce(
     for idx, i in enumerate(pbar):
         # print("Predicting on batch {}".format(i), flush=True)
         # if (i - start_ind) % 10 == 0 and i != start_ind:
-            # print(i)
-            # print("10 batches took {} seconds".format(time.time() - end_time))
-            # end_time = time.time()
+        # print(i)
+        # print("10 batches took {} seconds".format(time.time() - end_time))
+        # end_time = time.time()
 
         if (i - start_ind) % 1000 == 0 and i != start_ind:
             print("Saving checkpoint at {}th batch".format(i))
@@ -714,15 +722,19 @@ def infer_dannce(
         if sil_generator is not None:
             sil_ims = sil_generator.__getitem__(i)
             sil_ims = processing.extract_3d_sil(sil_ims[0][0], 18)
-            ims[0][0] = [np.concatenate((ims[0][0], sil_ims, sil_ims, sil_ims), axis=-1)]
-        
-        vols = torch.from_numpy(ims[0][0]).permute(0, 4, 1, 2, 3) # [B, C, H, W, D]
+            ims[0][0] = [
+                np.concatenate((ims[0][0], sil_ims, sil_ims, sil_ims), axis=-1)
+            ]
+
+        vols = torch.from_numpy(ims[0][0]).permute(0, 4, 1, 2, 3)  # [B, C, H, W, D]
         # replace occluded view
         if params["downscale_occluded_view"]:
             occlusion_scores = ims[0][2]
-            occluded_views = (occlusion_scores > 0.5)
+            occluded_views = occlusion_scores > 0.5
 
-            vols = vols.reshape(vols.shape[0], -1, 3, *vols.shape[2:]) #[B, 6, 3, H, W, D]
+            vols = vols.reshape(
+                vols.shape[0], -1, 3, *vols.shape[2:]
+            )  # [B, 6, 3, H, W, D]
 
             for instance in range(occluded_views.shape[0]):
                 occluded = np.where(occluded_views[instance])[0]
@@ -731,29 +743,38 @@ def infer_dannce(
                     alternative = np.random.choice(unoccluded)
                     vols[instance][view] = vols[instance][alternative]
                     print(f"Replace view {view} with {alternative}")
-            
+
             vols = vols.reshape(vols.shape[0], -1, *vols.shape[3:])
 
         model_inputs = [vols.to(device)]
         if params["expval"]:
-            model_inputs.append(torch.from_numpy(ims[0][1]).to(device)) 
+            model_inputs.append(torch.from_numpy(ims[0][1]).to(device))
         else:
             model_inputs.append(None)
-        
+
         with torch.no_grad():
             pred = model(*model_inputs)
 
         if params["expval"]:
-            probmap = torch.amax(pred[1], dim=(2, 3, 4)).squeeze(0).detach().cpu().numpy()
+            probmap = (
+                torch.amax(pred[1], dim=(2, 3, 4)).squeeze(0).detach().cpu().numpy()
+            )
             heatmaps = pred[1].squeeze().detach().cpu().numpy()
             pred = pred[0].detach().cpu().numpy()
             for j in range(pred.shape[0]):
                 pred_max = probmap[j]
                 sampleID = partition["valid_sampleIDs"][i * pred.shape[0] + j]
+                # save_data[idx * pred.shape[0] + j] = {
+                #    "pred_max": pred_max,
+                #    "pred_coord": pred[j],
+                #    "sampleID": sampleID,
+                # }
+                # save GT coords
                 save_data[idx * pred.shape[0] + j] = {
                     "pred_max": pred_max,
                     "pred_coord": pred[j],
                     "sampleID": sampleID,
+                    "gt_coord": ims[1][0][j],
                 }
                 if save_heatmaps:
                     np.save(os.path.join(save_path, sampleID), heatmaps[j])
@@ -782,7 +803,7 @@ def infer_dannce(
                 }
 
                 # save predicted heatmaps
-                savedir = './debug_MAX'
+                savedir = "./debug_MAX"
                 if not os.path.exists(savedir):
                     os.makedirs(savedir)
                 for i in range(preds.shape[-1]):
@@ -792,6 +813,7 @@ def infer_dannce(
                     imageio.mimwrite(of, np.transpose(im, [2, 0, 1]))
 
     return save_data
+
 
 def save_results(params, save_data):
     if params["expval"]:
@@ -831,11 +853,12 @@ def save_results(params, save_data):
             tcoord=False,
         )
 
+
 def random_rotate(X, y_3d):
     def rot90(X):
         X = X.permute(1, 0, 2, 3)
         return X.flip(1)
-    
+
     def rot180(X):
         return X.flip(0).flip(1)
 
@@ -846,13 +869,14 @@ def random_rotate(X, y_3d):
         elif rot == 1:
             # Rotate180
             X[j], y_3d[j] = rot180(X[j]), rot180(y_3d[j])
-        elif rot  == 2:
+        elif rot == 2:
             # Rotate90
             X[j], y_3d[j] = rot90(X[j]), rot90(y_3d[j])
         elif rot == 3:
             # Rotate -90/270
             X[j], y_3d[j] = rot180(rot90(X[j])), rot180(rot90(y_3d[j]))
     return X, y_3d
+
 
 def apply_random_transforms(volumes, grids):
     grids = grids.reshape(grids.shape[0], 80, 80, 80, 3)
@@ -861,9 +885,13 @@ def apply_random_transforms(volumes, grids):
     grids = grids.reshape(grids.shape[0], -1, 3)
     return volumes, grids
 
+
 def form_batch(volumes, grids, batch_size=4):
-    copies = [apply_random_transforms(volumes.clone(), grids.clone()) for i in range(batch_size)]
-    
+    copies = [
+        apply_random_transforms(volumes.clone(), grids.clone())
+        for i in range(batch_size)
+    ]
+
     volumes = torch.cat([copy[0] for copy in copies], dim=0)
     grids = torch.cat([copy[1] for copy in copies], dim=0)
 
