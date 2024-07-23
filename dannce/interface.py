@@ -1,6 +1,6 @@
 """Handle training and prediction for DANNCE and COM networks."""
 import os
-from typing import Dict
+from typing import Dict, Optional
 import psutil
 import torch
 
@@ -20,7 +20,7 @@ process = psutil.Process(os.getpid())
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
 
 
-def dannce_train(params: Dict):
+def dannce_train(params: Dict, debug: Optional[bool] = False):
     """Train dannce network.
 
     Args:
@@ -83,6 +83,11 @@ def dannce_train(params: Dict):
     model, optimizer, lr_scheduler = initialize_train(params, n_cams, device, logger)
     logger.info(model)
     logger.info("COMPLETE\n")
+
+    ########################################
+    # DEBUG STUFF
+    if debug:
+        return train_dataloader, valid_dataloader
 
     # set up trainer
     trainer_class = DannceTrainer

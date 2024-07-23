@@ -72,7 +72,9 @@ def camera_matrix(K: np.ndarray, R: np.ndarray, t: np.ndarray) -> np.ndarray:
     Note that this uses the matlab convention, such that
     M = [R;t] * K
     """
-    return np.concatenate((R, t), axis=0) @ K
+    Rt = np.hstack((R, t.reshape(-1, 1)))
+    return np.dot(K, Rt)
+    # return np.concatenate((R, t), axis=0) @ K
 
 
 def world_to_cam(pts, M, device):

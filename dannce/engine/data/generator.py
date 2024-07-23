@@ -287,6 +287,11 @@ class DataGenerator_3Dconv(DataGenerator):
         print("Init took {} sec.".format(time.time() - ts))
 
         self.pj_method = self.pj_grid_mirror if self.mirror else self.pj_grid
+        ##################################
+        # DEBUG STUFF
+        # self.pj = None
+        # self.thisim = None
+        # self.xgrid = None
 
     def __getitem__(self, index: int):
         """Generate one batch of data.
@@ -307,6 +312,9 @@ class DataGenerator_3Dconv(DataGenerator):
         X, y = self.__data_generation(list_IDs_temp)
 
         return X, y
+        ##################
+        # DEBUG STUFF
+        # return X, y, self.pj, self.thisim, self.xgrid
 
     def pj_grid(self, X_grid, camname, ID, experimentID):
         """Projects 3D voxel centers and sample images as projected 2D pixel coordinates
@@ -432,26 +440,23 @@ class DataGenerator_3Dconv(DataGenerator):
 
         dist_vec = np.concatenate((Rdistort, Tdistort))
 
+        # distortion happening by default, we don't care about the flag here
         proj_grid = (
             ops.project_to2d(pts=X_grid, rvec=R, tvec=t, K=K, distortion_vec=dist_vec)
             .squeeze(1)
             .to(self.device)
         )
 
-        # proj_grid = ops.project_to2d(
-        # print('Project2d took {} sec.'.format(time.time() - ts))
-
-        ts = time.time()
-        if self.distort:
-            proj_grid = ops.distortPoints(
-                proj_grid[:, :2],
-                self.camera_params[experimentID][camname]["K"],
-                np.squeeze(self.camera_params[experimentID][camname]["RDistort"]),
-                np.squeeze(self.camera_params[experimentID][camname]["TDistort"]),
-                self.device,
-            )
-            proj_grid = proj_grid.transpose(0, 1)
-            # print('Distort took {} sec.'.format(time.time() - ts))
+        # if self.distort:
+        #    proj_grid = ops.distortPoints(
+        #        proj_grid[:, :2],
+        #        self.camera_params[experimentID][camname]["K"],
+        #        np.squeeze(self.camera_params[experimentID][camname]["RDistort"]),
+        #        np.squeeze(self.camera_params[experimentID][camname]["TDistort"]),
+        #        self.device,
+        #    )
+        #    proj_grid = proj_grid.transpose(0, 1)
+        #   # print('Distort took {} sec.'.format(time.time() - ts))
 
         ts = time.time()
         if self.crop_im:
@@ -463,6 +468,11 @@ class DataGenerator_3Dconv(DataGenerator):
             proj_grid[:, 0] = proj_grid[:, 0] - self.crop_width[0]
             proj_grid[:, 1] = proj_grid[:, 1] - self.crop_height[0]
 
+        ##############################
+        # DEBUG STUFF
+        # self.pj = proj_grid
+        # self.thisim = thisim
+        # self.xgrid = X_grid
         rgb = ops.sample_grid(thisim, proj_grid, self.device, method=self.interp)
         # print('Sample grid {} sec.'.format(time.time() - ts))
 

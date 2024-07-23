@@ -16,7 +16,7 @@ import sys
 import ast
 import argparse
 import yaml
-from typing import Dict, Text
+from typing import Dict, Text, Optional
 
 
 def load_params(param_path: Text) -> Dict:
@@ -133,16 +133,22 @@ def dannce_predict_cli():
     dannce_predict(params)
 
 
-def dannce_train_cli():
+def dannce_train_cli(debug: Optional[bool] = False):
     """Entrypoint for dannce training."""
     parser = argparse.ArgumentParser(
         description="Dannce train CLI",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.set_defaults(**{**_param_defaults_shared, **_param_defaults_dannce})
-    args = parse_clargs(parser, model_type="dannce", prediction=False)
+    if debug:
+        args = parse_clargs(parser, model_type="dannce", prediction=False, debug=debug)
+    else:
+        args = parse_clargs(parser, model_type="dannce", prediction=False, debug=debug)
     params = build_clarg_params(args, dannce_net=True, prediction=False)
+    if debug:
+        return params
     dannce_train(params)
+
 
 def build_clarg_params(
     args: argparse.Namespace, dannce_net: bool, prediction: bool
@@ -158,6 +164,9 @@ def build_clarg_params(
         Dict: Parameters dictionary.
     """
     # Get the params specified in base config and io.yaml
+    args.base_config = (
+        "/home/jovyan/vast/ckapoor/multi-animal-dannce/configs/slap2m_exp5.yaml"
+    )
     params = build_params(args.base_config, dannce_net)
 
     # Combine those params with the clargs
@@ -254,9 +263,7 @@ def add_shared_args(
     )
 
     parser.add_argument(
-        "--predict-labeled-only",
-        dest="predict_labeled_only",
-        action="store_true"
+        "--predict-labeled-only", dest="predict_labeled_only", action="store_true"
     )
 
     parser.add_argument(
@@ -552,11 +559,7 @@ def add_dannce_shared_args(
         type=ast.literal_eval,
         dest="soft_silhouette",
     )
-    parser.add_argument(
-        "--dataset",
-        default="label3d",
-        dest="dataset"
-    )
+    parser.add_argument("--dataset", default="label3d", dest="dataset")
     return parser
 
 
@@ -646,8 +649,9 @@ def add_dannce_train_args(
         "--avg-max",
         dest="avg+max",
         type=float,
-        help="Pass a floating point value here for DANNCE to enter AVG+MAX training mode, where the 3D maps are MAX-like regularized to be Gaussian. The avg+max value is used to weight the contribution of the MAX-like loss.")
-    
+        help="Pass a floating point value here for DANNCE to enter AVG+MAX training mode, where the 3D maps are MAX-like regularized to be Gaussian. The avg+max value is used to weight the contribution of the MAX-like loss.",
+    )
+
     parser.add_argument(
         "--silhouette-loss-weight",
         type=float,
@@ -668,17 +672,13 @@ def add_dannce_train_args(
         type=float,
         dest="unlabeled_temp",
     )
-    parser.add_argument(
-        "--support-exp",
-        type=ast.literal_eval,
-        dest="support_exp"
-    )
+    parser.add_argument("--support-exp", type=ast.literal_eval, dest="support_exp")
     parser.add_argument(
         "--n-support-chunks",
         type=int,
         dest="n_support_chunks",
     )
-    
+
     return parser
 
 
@@ -854,7 +854,10 @@ def add_com_shared_args(
 
 
 def parse_clargs(
-    parser: argparse.ArgumentParser, model_type: Text, prediction: bool
+    parser: argparse.ArgumentParser,
+    model_type: Text,
+    prediction: bool,
+    debug: bool,
 ) -> argparse.Namespace:
     """Parse command line arguments.
 
@@ -888,6 +891,10 @@ def parse_clargs(
             parser = add_com_predict_args(parser)
         else:
             parser = add_com_train_args(parser)
+
+    if debug:
+        args, _ = parser.parse_known_args()
+        return args
 
     return parser.parse_args()
 

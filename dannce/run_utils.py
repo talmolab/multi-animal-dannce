@@ -422,10 +422,12 @@ def _convert_slap2m_to_label3d(annot_dict, all_experiments):
     # all_data = annot_dict["all_poses"]
 
     print(f"** Loading in SLAP2M annotation **")
-    root = "/home/jovyan/vast/ckapoor/keypoint-tracking/slap_2m_sample/poses"
-    all_pose_paths = os.listdir(
-        "/home/jovyan/vast/ckapoor/keypoint-tracking/slap_2m_sample/poses"
-    )
+    root = "/home/jovyan/vast/ckapoor/multi-animal-dannce/slap_2m_sample/poses"
+    all_pose_paths = os.listdir(root)
+    # root = "/home/jovyan/vast/ckapoor/keypoint-tracking/slap_2m_sample/poses"
+    # all_pose_paths = os.listdir(
+    #    "/home/jovyan/vast/ckapoor/keypoint-tracking/slap_2m_sample/poses"
+    # )
     # for i, expname in enumerate(tqdm(all_experiments)):
     for i, name in enumerate(tqdm(all_pose_paths)):
         path_split = name.split("_")
@@ -474,8 +476,11 @@ def _convert_slap2m_to_label3d(annot_dict, all_experiments):
         # prepare cameras
         # load intrinsics
         intrinsic_path = (
-            "/home/jovyan/vast/ckapoor/keypoint-tracking/slap_2m_sample/intrinsics"
+            "/home/jovyan/vast/ckapoor/multi-animal-dannce/slap_2m_sample/intrinsics"
         )
+        # intrinsic_path = (
+        #    "/home/jovyan/vast/ckapoor/keypoint-tracking/slap_2m_sample/intrinsics"
+        # )
         with open(os.path.join(intrinsic_path, f"{session_idx}.json"), "r") as f:
             session_intrinsics = json.load(f)
 
@@ -508,6 +513,7 @@ def make_slap2m(
     root="/home/jovyan/talmolab-smb/eric/slap_2m/",
     annot="consolidated_poses.pkl",
     viddir="frames",
+    debug: Optional[bool] = False,
 ):
     # load annotations from disk
     save_dir = "/home/jovyan/vast/ckapoor/keypoint-tracking/slap_2m_sample/"
@@ -550,7 +556,6 @@ def make_slap2m(
     partition = partition_data(
         all_frames, params, params["dannce_train_dir"], num_experiments
     )
-    # partition = processing.make_data_splits(samples, params, params["dannce_train_dir"], num_experiments, temporal_chunks=None)
 
     processing.save_params_pickle(params)
 
@@ -585,7 +590,14 @@ def make_slap2m(
         tifdirs,
         None,
         logger,
+        debug,
     )
+
+    #####################################
+    # DEBUG STUFF
+    if debug:
+        print(f"type train: {type(train_generator)}")
+        return train_generator, valid_generator, len(camnames[0])
 
     train_dataloader, valid_dataloader = serve_data_DANNCE.setup_dataloaders(
         train_generator, valid_generator, params
@@ -639,6 +651,7 @@ def _make_data_mem(
     tifdirs,
     vids,
     logger,
+    debug,
 ):
     """
     Training samples are stored in the memory and deployed on the fly.
@@ -689,6 +702,11 @@ def _make_data_mem(
 
     train_generator = genfunc(*train_gen_params, **valid_params)
     valid_generator = genfunc(*valid_gen_params, **valid_params)
+
+    ########################################
+    # DEBUG STUFF
+    if debug:
+        return train_generator, valid_generator
 
     # load everything into memory
     X_train, X_train_grid, y_train = processing.load_volumes_into_mem(
